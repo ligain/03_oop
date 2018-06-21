@@ -36,8 +36,24 @@ GENDERS = {
 }
 
 
+
+
 class CharField(object):
-    pass
+
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def __set__(self, instance, value):
+        if not isinstance(value, str):
+            raise ValueError("The field must be a string")
+        if self.nullable is not True and value is None:
+            raise ValueError("The field cannot be "
+                             "None with nullable=False option")
+        self.value = value
+
+    def __get__(self, instance, owner):
+        return self.value
 
 
 class ArgumentsField(object):
@@ -69,25 +85,56 @@ class ClientIDsField(object):
 
 
 class ClientsInterestsRequest(object):
-    client_ids = ClientIDsField(required=True)
-    date = DateField(required=False, nullable=True)
+    pass
+    # client_ids = ClientIDsField(required=True)
+    # date = DateField(required=False, nullable=True)
 
 
 class OnlineScoreRequest(object):
-    first_name = CharField(required=False, nullable=True)
-    last_name = CharField(required=False, nullable=True)
-    email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=True)
-    birthday = BirthDayField(required=False, nullable=True)
-    gender = GenderField(required=False, nullable=True)
+    pass
+    # first_name = CharField(required=False, nullable=True)
+    # last_name = CharField(required=False, nullable=True)
+    # email = EmailField(required=False, nullable=True)
+    # phone = PhoneField(required=False, nullable=True)
+    # birthday = BirthDayField(required=False, nullable=True)
+    # gender = GenderField(required=False, nullable=True)
 
 
-class MethodRequest(object):
+class checkedmeta(type):
+    def __new__(cls, clsname, bases, methods):
+        print(clsname, bases, methods)
+        # for key, value in methods.items():
+        #     print("key %s, value %s" % key, value)
+            # if isinstance(value, Descriptor):
+            #     value.name = key
+        return type.__new__(cls, clsname, bases, methods)
+
+
+class BaseRequest(object):
+    # __metaclass__ = checkedmeta
+
+    def __init__(self, **kwargs):
+        self._is_valid = True
+        self._errors = {}
+        # self.account = account
+        for key, value in kwargs.items():
+            try:
+                setattr(self, key, value)
+            except ValueError as e:
+                self._errors.update({key: str(e)})
+
+    @property
+    def is_valid(self):
+        return self._is_valid
+
+
+class MethodRequest(BaseRequest):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
-    token = CharField(required=True, nullable=True)
-    arguments = ArgumentsField(required=True, nullable=True)
-    method = CharField(required=True, nullable=False)
+
+    # token = CharField(required=True, nullable=True)
+    # arguments = ArgumentsField(required=True, nullable=True)
+    # method = CharField(required=True, nullable=False)
 
     @property
     def is_admin(self):
@@ -106,6 +153,7 @@ def check_auth(request):
 
 def method_handler(request, ctx, store):
     response, code = None, None
+    r = MethodRequest(account=12)
     return response, code
 
 
@@ -151,6 +199,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         logging.info(context)
         self.wfile.write(json.dumps(r))
         return
+
 
 if __name__ == "__main__":
     op = OptionParser()
