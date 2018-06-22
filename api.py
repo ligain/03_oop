@@ -10,6 +10,8 @@ import uuid
 from optparse import OptionParser
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 
+from collections import defaultdict
+
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
 ADMIN_SALT = "42"
@@ -36,8 +38,6 @@ GENDERS = {
 }
 
 
-
-
 class CharField(object):
 
     def __init__(self, **kwargs):
@@ -61,7 +61,11 @@ class ArgumentsField(object):
 
 
 class EmailField(CharField):
-    pass
+    def __set__(self, instance, value):
+        super(EmailField, self).__set__(instance, value)
+        if "@" not in value:
+            raise ValueError("@ character should be in EmailField")
+        self.value = value
 
 
 class PhoneField(object):
@@ -100,37 +104,39 @@ class OnlineScoreRequest(object):
     # gender = GenderField(required=False, nullable=True)
 
 
-class checkedmeta(type):
-    def __new__(cls, clsname, bases, methods):
-        print(clsname, bases, methods)
-        # for key, value in methods.items():
-        #     print("key %s, value %s" % key, value)
-            # if isinstance(value, Descriptor):
-            #     value.name = key
-        return type.__new__(cls, clsname, bases, methods)
-
-
 class BaseRequest(object):
-    # __metaclass__ = checkedmeta
 
     def __init__(self, **kwargs):
-        self._is_valid = True
-        self._errors = {}
-        # self.account = account
-        for key, value in kwargs.items():
-            try:
-                setattr(self, key, value)
-            except ValueError as e:
-                self._errors.update({key: str(e)})
+        self._errors = defaultdict(list)
+        self._fields = self._get_fields()
 
-    @property
+        for field_name, field_value in self._fields:
+            if kwargs.get(field_name) is not None:
+                try:
+                    setattr(self, field_name, kwargs.get(field_name))
+                except ValueError as e:
+                    self._errors[field_name].append(str(e))
+            else:
+                if field_value.required:
+                    self._errors[field_name].append("The field is required")
+
+    def _get_fields(self):
+        fields = []
+        for name, value in vars(self.__class__).items():
+            if hasattr(value, 'required'):
+                fields.append((name, value))
+        return fields
+
     def is_valid(self):
-        return self._is_valid
+        return False if self._errors else True
 
 
 class MethodRequest(BaseRequest):
     account = CharField(required=False, nullable=True)
-    login = CharField(required=True, nullable=True)
+    login = CharField(required=True, nullable=False)
+
+    # TODO: delete after testing
+    email = EmailField(required=False, nullable=True)
 
     # token = CharField(required=True, nullable=True)
     # arguments = ArgumentsField(required=True, nullable=True)
@@ -153,7 +159,8 @@ def check_auth(request):
 
 def method_handler(request, ctx, store):
     response, code = None, None
-    r = MethodRequest(account=12)
+    r = MethodRequest(account=12, login="", email=12)
+    r.is_valid()
     return response, code
 
 
