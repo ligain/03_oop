@@ -10,7 +10,7 @@ import uuid
 from optparse import OptionParser
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 
-from collections import defaultdict
+from collections import defaultdict, Sequence, Sized
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -36,20 +36,21 @@ GENDERS = {
     MALE: "male",
     FEMALE: "female",
 }
+LIMIT_YEARS = 70
 
 
 class CharField(object):
 
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+    def __init__(self, required=False, nullable=False):
+        self.required = required
+        self.nullable = nullable
 
     def __set__(self, instance, value):
-        if not isinstance(value, str):
-            raise ValueError("The field must be a string")
-        if self.nullable is not True and value is None:
+        if not self.nullable and value is None:
             raise ValueError("The field cannot be "
                              "None with nullable=False option")
+        if not (isinstance(value, str) or value is None):
+            raise ValueError("The field must be a string or None")
         self.value = value
 
     def __get__(self, instance, owner):
@@ -57,51 +58,117 @@ class CharField(object):
 
 
 class ArgumentsField(object):
-    pass
+    def __init__(self, required=False, nullable=False):
+        self.required = required
+        self.nullable = nullable
+
+    def __set__(self, instance, value):
+        if not self.nullable and value is None:
+            raise ValueError("The field cannot be "
+                             "None with nullable=False option")
+        if not (isinstance(value, dict) or value is None):
+            raise ValueError("The field must be a dict")
+        self.value = value
+
+    def __get__(self, instance, owner):
+        return self.value
 
 
 class EmailField(CharField):
     def __set__(self, instance, value):
         super(EmailField, self).__set__(instance, value)
-        if "@" not in value:
+        if isinstance(value, str) and "@" not in value:
             raise ValueError("@ character should be in EmailField")
         self.value = value
 
 
 class PhoneField(object):
-    pass
+    def __init__(self, required=False, nullable=False):
+        self.required = required
+        self.nullable = nullable
+
+    def __set__(self, instance, value):
+        if not self.nullable and value is None:
+            raise ValueError("The field cannot be "
+                             "None with nullable=False option")
+        if not (isinstance(value, str) or value is None or isinstance(value, int)):
+            raise ValueError("The field must be a string or None or int")
+        if isinstance(value, str) or isinstance(value, int):
+            converted_value = str(value)
+            if not (len(converted_value) == 11 or converted_value.startswith("7")):
+                raise ValueError("The field should has length=11 and starts from 7")
+        self.value = value
+
+    def __get__(self, instance, owner):
+        return self.value
 
 
 class DateField(object):
-    pass
+    def __init__(self, required=False, nullable=False):
+        self.required = required
+        self.nullable = nullable
+
+    def __set__(self, instance, value):
+        if not self.nullable and value is None:
+            raise ValueError("The field cannot be "
+                             "None with nullable=False option")
+        if not (isinstance(value, datetime.date) or value is None or isinstance(value, str)):
+            raise ValueError("The field must be a date or null or int")
+        self.value = value
+
+    def __get__(self, instance, owner):
+        return self.value
 
 
-class BirthDayField(object):
-    pass
+class BirthDayField(DateField):
+    def __set__(self, instance, value):
+        if isinstance(value, str):
+            value = datetime.datetime.strptime(value, "%d.%m.%Y")
+        if isinstance(value, datetime.datetime):
+            if value < (datetime.datetime.today() - datetime.timedelta(days=365 * LIMIT_YEARS)):
+                raise ValueError("The field cannot be older than %d years" % LIMIT_YEARS)
+        self.value = value
+
+    def __get__(self, instance, owner):
+        return self.value
 
 
 class GenderField(object):
-    pass
+    def __init__(self, required=False, nullable=False):
+        self.required = required
+        self.nullable = nullable
+
+    def __set__(self, instance, value):
+        if not self.nullable and value is None:
+            raise ValueError("The field cannot be "
+                             "None with nullable=False option")
+        if not (isinstance(value, int) or value is None):
+            raise ValueError("The field must be int or None")
+        if value not in [0, 1, 2]:
+            raise ValueError("The field should have value: 0, 1 or 2")
+        self.value = value
+
+    def __get__(self, instance, owner):
+        return self.value
 
 
 class ClientIDsField(object):
-    pass
+    def __init__(self, required=False, nullable=False):
+        self.required = required
+        self.nullable = nullable
 
+    def __set__(self, instance, value):
+        if not self.nullable and value is None:
+            raise ValueError("The field cannot be "
+                             "None with nullable=False option")
+        if not (isinstance(value, Sequence) or value is None):
+            raise ValueError("The field must be Sequence or None")
+        if isinstance(value, Sized) and len(value) < 0:
+            raise ValueError("The field must contain more than one id")
+        self.value = value
 
-class ClientsInterestsRequest(object):
-    pass
-    # client_ids = ClientIDsField(required=True)
-    # date = DateField(required=False, nullable=True)
-
-
-class OnlineScoreRequest(object):
-    pass
-    # first_name = CharField(required=False, nullable=True)
-    # last_name = CharField(required=False, nullable=True)
-    # email = EmailField(required=False, nullable=True)
-    # phone = PhoneField(required=False, nullable=True)
-    # birthday = BirthDayField(required=False, nullable=True)
-    # gender = GenderField(required=False, nullable=True)
+    def __get__(self, instance, owner):
+        return self.value
 
 
 class BaseRequest(object):
@@ -111,14 +178,12 @@ class BaseRequest(object):
         self._fields = self._get_fields()
 
         for field_name, field_value in self._fields:
-            if kwargs.get(field_name) is not None:
-                try:
-                    setattr(self, field_name, kwargs.get(field_name))
-                except ValueError as e:
-                    self._errors[field_name].append(str(e))
-            else:
-                if field_value.required:
-                    self._errors[field_name].append("The field is required")
+            if field_value.required and kwargs.get(field_name, False) is False:
+                self._errors[field_name].append("The field is required")
+            try:
+                setattr(self, field_name, kwargs.get(field_name))
+            except ValueError as e:
+                self._errors[field_name].append(str(e))
 
     def _get_fields(self):
         fields = []
@@ -128,19 +193,34 @@ class BaseRequest(object):
         return fields
 
     def is_valid(self):
-        return False if self._errors else True
+        return not bool(self._errors)
+
+    @property
+    def errors(self):
+        return self._errors
+
+
+class ClientsInterestsRequest(object):
+    pass
+    # client_ids = ClientIDsField(required=True)
+    # date = DateField(required=False, nullable=True)
+
+
+class OnlineScoreRequest(BaseRequest):
+    first_name = CharField(required=False, nullable=True)
+    last_name = CharField(required=False, nullable=True)
+    email = EmailField(required=False, nullable=True)
+    phone = PhoneField(required=False, nullable=False)
+    birthday = BirthDayField(required=False, nullable=True)
+    # gender = GenderField(required=False, nullable=True)
 
 
 class MethodRequest(BaseRequest):
     account = CharField(required=False, nullable=True)
-    login = CharField(required=True, nullable=False)
-
-    # TODO: delete after testing
-    email = EmailField(required=False, nullable=True)
-
-    # token = CharField(required=True, nullable=True)
-    # arguments = ArgumentsField(required=True, nullable=True)
-    # method = CharField(required=True, nullable=False)
+    login = CharField(required=True, nullable=True)
+    token = CharField(required=True, nullable=True)
+    arguments = ArgumentsField(required=True, nullable=True)
+    method = CharField(required=True, nullable=False)
 
     @property
     def is_admin(self):
@@ -159,8 +239,9 @@ def check_auth(request):
 
 def method_handler(request, ctx, store):
     response, code = None, None
-    r = MethodRequest(account=12, login="", email=12)
-    r.is_valid()
+    # r = MethodRequest(account="sdf", login=None, token="", method="", arguments={})
+    # **request.get("arguments")
+    s = OnlineScoreRequest(first_name=None, last_name="Ступников", email="stupnikov@otus.ru", phone=None, birthday="01.01.1990")
     return response, code
 
 
