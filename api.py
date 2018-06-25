@@ -37,138 +37,116 @@ GENDERS = {
     FEMALE: "female",
 }
 LIMIT_YEARS = 70
+PHONE_LENGTH = 11
 
 
-class CharField(object):
-
+class BaseField(object):
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
+        self.value = None
 
     def __set__(self, instance, value):
         if not self.nullable and value is None:
             raise ValueError("The field cannot be "
                              "None with nullable=False option")
-        if not (isinstance(value, str) or value is None):
-            raise ValueError("The field must be a string or None")
-        self.value = value
 
     def __get__(self, instance, owner):
         return self.value
 
 
-class ArgumentsField(object):
-    def __init__(self, required=False, nullable=False):
-        self.required = required
-        self.nullable = nullable
+class TypeFieldMixin(BaseField):
+    allowed_types = [type(None)]
 
     def __set__(self, instance, value):
-        if not self.nullable and value is None:
-            raise ValueError("The field cannot be "
-                             "None with nullable=False option")
-        if not (isinstance(value, dict) or value is None):
-            raise ValueError("The field must be a dict")
+        super(TypeFieldMixin, self).__set__(instance, value)
+        if not any(isinstance(value, type_) for type_ in self.allowed_types):
+            error_str = ' or '.join(
+                str(type_) for type_ in self.allowed_types
+            )
+            raise TypeError("The field must be %s" % error_str)
+
+
+class CharField(TypeFieldMixin, BaseField):
+    allowed_types = [type(None), str, unicode]
+
+    def __set__(self, instance, value):
+        super(CharField, self).__set__(instance, value)
         self.value = value
 
-    def __get__(self, instance, owner):
-        return self.value
+
+class ArgumentsField(TypeFieldMixin, BaseField):
+    allowed_types = [type(None), dict]
+
+    def __set__(self, instance, value):
+        super(ArgumentsField, self).__set__(instance, value)
+        self.value = value
 
 
 class EmailField(CharField):
     def __set__(self, instance, value):
         super(EmailField, self).__set__(instance, value)
-        if isinstance(value, str) and "@" not in value:
+        if (isinstance(self.value, str) or isinstance(self.value, unicode)) \
+                and "@" not in value:
             raise ValueError("@ character should be in EmailField")
-        self.value = value
 
 
-class PhoneField(object):
-    def __init__(self, required=False, nullable=False):
-        self.required = required
-        self.nullable = nullable
+class PhoneField(TypeFieldMixin, BaseField):
+    allowed_types = [type(None), str, unicode, int]
 
     def __set__(self, instance, value):
-        if not self.nullable and value is None:
-            raise ValueError("The field cannot be "
-                             "None with nullable=False option")
-        if not (isinstance(value, str) or value is None or isinstance(value, int)):
-            raise ValueError("The field must be a string or None or int")
-        if isinstance(value, str) or isinstance(value, int):
+        super(PhoneField, self).__set__(instance, value)
+        if (isinstance(value, str) or isinstance(value, unicode) or
+                isinstance(value, int)):
             converted_value = str(value)
-            if not (len(converted_value) == 11 or converted_value.startswith("7")):
-                raise ValueError("The field should has length=11 and starts from 7")
+            if not (len(converted_value) == PHONE_LENGTH
+                    and converted_value.startswith("7")):
+                raise ValueError("The field should has length=11 "
+                                 "and starts from 7")
         self.value = value
 
-    def __get__(self, instance, owner):
-        return self.value
 
-
-class DateField(object):
-    def __init__(self, required=False, nullable=False):
-        self.required = required
-        self.nullable = nullable
+class DateField(TypeFieldMixin, BaseField):
+    allowed_types = [type(None), str, unicode, datetime.datetime]
 
     def __set__(self, instance, value):
-        if not self.nullable and value is None:
-            raise ValueError("The field cannot be "
-                             "None with nullable=False option")
-        if not (isinstance(value, datetime.date) or value is None or isinstance(value, str)):
-            raise ValueError("The field must be a date or null or int")
+        super(DateField, self).__set__(instance, value)
+        if isinstance(value, str) or isinstance(value, unicode):
+            try:
+                value = datetime.datetime.strptime(value, "%d.%m.%Y")
+            except ValueError:
+                raise ValueError("Invalid field datetime format")
         self.value = value
-
-    def __get__(self, instance, owner):
-        return self.value
 
 
 class BirthDayField(DateField):
     def __set__(self, instance, value):
-        if isinstance(value, str):
-            value = datetime.datetime.strptime(value, "%d.%m.%Y")
-        if isinstance(value, datetime.datetime):
-            if value < (datetime.datetime.today() - datetime.timedelta(days=365 * LIMIT_YEARS)):
-                raise ValueError("The field cannot be older than %d years" % LIMIT_YEARS)
-        self.value = value
-
-    def __get__(self, instance, owner):
-        return self.value
+        super(BirthDayField, self).__set__(instance, value)
+        if isinstance(self.value, datetime.datetime):
+            if self.value < (datetime.datetime.today() -
+                            datetime.timedelta(days=365 * LIMIT_YEARS)):
+                raise ValueError("The field cannot be "
+                                 "older than %d years" % LIMIT_YEARS)
 
 
-class GenderField(object):
-    def __init__(self, required=False, nullable=False):
-        self.required = required
-        self.nullable = nullable
+class GenderField(TypeFieldMixin, BaseField):
+    allowed_types = [type(None), int]
 
     def __set__(self, instance, value):
-        if not self.nullable and value is None:
-            raise ValueError("The field cannot be "
-                             "None with nullable=False option")
-        if not (isinstance(value, int) or value is None):
-            raise ValueError("The field must be int or None")
-        if value not in [0, 1, 2]:
+        super(GenderField, self).__set__(instance, value)
+        if value not in [None, 0, 1, 2]:
             raise ValueError("The field should have value: 0, 1 or 2")
         self.value = value
 
-    def __get__(self, instance, owner):
-        return self.value
 
-
-class ClientIDsField(object):
-    def __init__(self, required=False, nullable=False):
-        self.required = required
-        self.nullable = nullable
+class ClientIDsField(TypeFieldMixin, BaseField):
+    allowed_types = [type(None), Sequence]
 
     def __set__(self, instance, value):
-        if not self.nullable and value is None:
-            raise ValueError("The field cannot be "
-                             "None with nullable=False option")
-        if not (isinstance(value, Sequence) or value is None):
-            raise ValueError("The field must be Sequence or None")
-        if isinstance(value, Sized) and len(value) < 0:
+        super(ClientIDsField, self).__set__(instance, value)
+        if isinstance(value, Sized) and len(value) <= 0:
             raise ValueError("The field must contain more than one id")
         self.value = value
-
-    def __get__(self, instance, owner):
-        return self.value
 
 
 class BaseRequest(object):
@@ -182,7 +160,7 @@ class BaseRequest(object):
                 self._errors[field_name].append("The field is required")
             try:
                 setattr(self, field_name, kwargs.get(field_name))
-            except ValueError as e:
+            except (ValueError, TypeError) as e:
                 self._errors[field_name].append(str(e))
 
     def _get_fields(self):
@@ -192,6 +170,9 @@ class BaseRequest(object):
                 fields.append((name, value))
         return fields
 
+    def get_result(self):
+        raise NotImplemented
+
     def is_valid(self):
         return not bool(self._errors)
 
@@ -200,23 +181,48 @@ class BaseRequest(object):
         return self._errors
 
 
-class ClientsInterestsRequest(object):
-    pass
-    # client_ids = ClientIDsField(required=True)
-    # date = DateField(required=False, nullable=True)
+class BaseOnlineScoreRequest(BaseRequest):
+    def __init__(self, **kwargs):
+        super(BaseOnlineScoreRequest, self).__init__(**kwargs)
+        # check if any of this pairs: phone & email or
+        # first & last name or gender & birthday exist in passed arguments
+        is_phone_and_email_exists = kwargs.get("phone") and kwargs.get("email")
+        is_first_and_last_name_exists = (kwargs.get("first_name")
+                                         and kwargs.get("last_name"))
+        is_gender_and_birthday_exists = (kwargs.get("gender")
+                                         and kwargs.get("birthday"))
+
+        if not any([is_phone_and_email_exists, is_first_and_last_name_exists,
+                    is_gender_and_birthday_exists]):
+            self._errors["params"] = "missing one of non-empty pairs: " \
+                                     "phone & email or first & last name or " \
+                                     "gender & birthday"
+
+    def get_result(self):
+        pass
 
 
-class OnlineScoreRequest(BaseRequest):
+class ClientsInterestsMixin(BaseRequest):
+    def get_result(self):
+        pass
+
+
+class ClientsInterestsRequest(ClientsInterestsMixin, BaseRequest):
+    client_ids = ClientIDsField(required=True)
+    date = DateField(required=False, nullable=True)
+
+
+class OnlineScoreRequest(BaseOnlineScoreRequest):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
     phone = PhoneField(required=False, nullable=False)
     birthday = BirthDayField(required=False, nullable=True)
-    # gender = GenderField(required=False, nullable=True)
+    gender = GenderField(required=False, nullable=True)
 
 
 class MethodRequest(BaseRequest):
-    account = CharField(required=False, nullable=True)
+    account = CharField(required=False, nullable=False)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
     arguments = ArgumentsField(required=True, nullable=True)
@@ -238,10 +244,29 @@ def check_auth(request):
 
 
 def method_handler(request, ctx, store):
-    response, code = None, None
-    # r = MethodRequest(account="sdf", login=None, token="", method="", arguments={})
-    # **request.get("arguments")
-    s = OnlineScoreRequest(first_name=None, last_name="Ступников", email="stupnikov@otus.ru", phone=None, birthday="01.01.1990")
+    response, code = {}, None
+    request_obj = MethodRequest(**request["body"])
+
+    if not request_obj.is_valid():
+        logging.info("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
+        return request_obj.errors, BAD_REQUEST
+
+    method = request["body"].get("method")
+    if method == "online_score":
+        method_obj = OnlineScoreRequest(**request["body"].get("arguments"))
+    elif method == "clients_interests":
+        method_obj = ClientsInterestsRequest(**request["body"].get("arguments"))
+    else:
+        logging.info("Unknown method: %s" % method)
+        return {"method": "Unknown method"}, INVALID_REQUEST
+
+    if method_obj.is_valid():
+        response = method_obj.get_result()
+        code = OK
+    else:
+        logging.info("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
+        return method_obj.errors, BAD_REQUEST
+    ctx.update({"new": 1})
     return response, code
 
 
