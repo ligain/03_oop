@@ -9,8 +9,9 @@ import hashlib
 import uuid
 from optparse import OptionParser
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
-
 from collections import defaultdict, Sequence, Sized
+
+from scoring import get_score, get_interests
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -170,7 +171,10 @@ class BaseRequest(object):
                 fields.append((name, value))
         return fields
 
-    def get_result(self):
+    def get_result(self, store):
+        raise NotImplemented
+
+    def get_context(self):
         raise NotImplemented
 
     def is_valid(self):
@@ -198,12 +202,30 @@ class BaseOnlineScoreRequest(BaseRequest):
                                      "phone & email or first & last name or " \
                                      "gender & birthday"
 
-    def get_result(self):
-        pass
+    def get_result(self, store):
+        score = get_score(
+            store,
+            phone=self.phone,
+            email=self.email,
+            birthday=self.birthday,
+            gender=self.gender,
+            first_name=self.first_name,
+            last_name=self.last_name
+        )
+        return {"score": score}
+
+    def get_context(self):
+        return {
+            "has": [field_name for field_name, field_value in self._fields
+                    if field_value.value]
+        }
 
 
 class ClientsInterestsMixin(BaseRequest):
-    def get_result(self):
+    def get_result(self, store):
+        pass
+
+    def get_context(self):
         pass
 
 
@@ -244,12 +266,20 @@ def check_auth(request):
 
 
 def method_handler(request, ctx, store):
-    response, code = {}, None
     request_obj = MethodRequest(**request["body"])
 
     if not request_obj.is_valid():
-        logging.info("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
+        logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
         return request_obj.errors, BAD_REQUEST
+
+    if not check_auth(request_obj):
+        logging.error("%s user %s: %d" % (ERRORS[FORBIDDEN],
+                                         request_obj.login, FORBIDDEN))
+        return request_obj.errors, FORBIDDEN
+
+    if request_obj.is_admin:
+        logging.info("Returned response for admin with score=42")
+        return {"score": 42}, OK
 
     method = request["body"].get("method")
     if method == "online_score":
@@ -261,12 +291,15 @@ def method_handler(request, ctx, store):
         return {"method": "Unknown method"}, INVALID_REQUEST
 
     if method_obj.is_valid():
-        response = method_obj.get_result()
+        response = method_obj.get_result(store)
+        context = method_obj.get_context()
         code = OK
     else:
-        logging.info("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
+        logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
         return method_obj.errors, BAD_REQUEST
-    ctx.update({"new": 1})
+    ctx.update(context)
+    logging.info("Returned context: %s, "
+                 "response: %s, code: %s" % (context, response, code))
     return response, code
 
 
