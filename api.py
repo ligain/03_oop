@@ -49,12 +49,19 @@ class BaseField(object):
     If `nullable` attr is set to `True` the field
     can have `None` value.
     """
+    allowed_types = (type(None),)
+
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
         self.value = None
 
     def __set__(self, instance, value):
+        if not isinstance(value, self.allowed_types):
+            error_str = ' or '.join(
+                str(type_) for type_ in self.allowed_types
+            )
+            raise TypeError("The field must be %s" % error_str)
         if not self.nullable and value is None:
             raise ValueError("The field cannot be "
                              "None with nullable=False option")
@@ -63,24 +70,7 @@ class BaseField(object):
         return self.value
 
 
-class TypeFieldMixin(BaseField):
-    """
-    A mixin to check whether `Field` type suits
-    types in `allowed_types` variable
-    `allowed_types` should be a tuple
-    """
-    allowed_types = (type(None), )
-
-    def __set__(self, instance, value):
-        super(TypeFieldMixin, self).__set__(instance, value)
-        if not isinstance(value, self.allowed_types):
-            error_str = ' or '.join(
-                str(type_) for type_ in self.allowed_types
-            )
-            raise TypeError("The field must be %s" % error_str)
-
-
-class CharField(TypeFieldMixin, BaseField):
+class CharField(BaseField):
     allowed_types = (type(None), basestring)
 
     def __set__(self, instance, value):
@@ -88,7 +78,7 @@ class CharField(TypeFieldMixin, BaseField):
         self.value = value
 
 
-class ArgumentsField(TypeFieldMixin, BaseField):
+class ArgumentsField(BaseField):
     allowed_types = (type(None), dict)
 
     def __set__(self, instance, value):
@@ -103,7 +93,7 @@ class EmailField(CharField):
             raise ValueError("@ character should be in EmailField")
 
 
-class PhoneField(TypeFieldMixin, BaseField):
+class PhoneField(BaseField):
     allowed_types = (type(None), basestring, int)
 
     def __set__(self, instance, value):
@@ -117,7 +107,7 @@ class PhoneField(TypeFieldMixin, BaseField):
         self.value = value
 
 
-class DateField(TypeFieldMixin, BaseField):
+class DateField(BaseField):
     allowed_types = (type(None), basestring, datetime.datetime)
 
     def __set__(self, instance, value):
@@ -140,7 +130,7 @@ class BirthDayField(DateField):
                                  "older than %d years" % LIMIT_YEARS)
 
 
-class GenderField(TypeFieldMixin, BaseField):
+class GenderField(BaseField):
     allowed_types = (type(None), int)
 
     def __set__(self, instance, value):
@@ -152,7 +142,7 @@ class GenderField(TypeFieldMixin, BaseField):
         self.value = value
 
 
-class ClientIDsField(TypeFieldMixin, BaseField):
+class ClientIDsField(BaseField):
     allowed_types = (type(None), Sequence)
 
     def __set__(self, instance, value):
