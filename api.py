@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import abc
 import json
 import datetime
 import logging
 import hashlib
 import uuid
+
 from optparse import OptionParser
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 from collections import defaultdict, Sequence, Sized
@@ -57,7 +57,7 @@ class BaseField(object):
 
 
 class TypeFieldMixin(BaseField):
-    allowed_types = [type(None)]
+    allowed_types = (type(None))
 
     def __set__(self, instance, value):
         super(TypeFieldMixin, self).__set__(instance, value)
@@ -112,6 +112,7 @@ class DateField(TypeFieldMixin, BaseField):
 
     def __set__(self, instance, value):
         super(DateField, self).__set__(instance, value)
+        # TODO: change to basestring
         if isinstance(value, str) or isinstance(value, unicode):
             try:
                 value = datetime.datetime.strptime(value, "%d.%m.%Y")
@@ -135,8 +136,10 @@ class GenderField(TypeFieldMixin, BaseField):
 
     def __set__(self, instance, value):
         super(GenderField, self).__set__(instance, value)
-        if value not in [None, 0, 1, 2]:
-            raise ValueError("The field should have value: 0, 1 or 2")
+        variants = GENDERS.keys() + [None]
+        if value not in variants:
+            raise ValueError("The field should have "
+                             "values: %s" % " ,".join(variants))
         self.value = value
 
 
@@ -147,6 +150,8 @@ class ClientIDsField(TypeFieldMixin, BaseField):
         super(ClientIDsField, self).__set__(instance, value)
         if isinstance(value, Sized) and len(value) <= 0:
             raise ValueError("The field must contain more than one id")
+        if not all(map(lambda i: isinstance(i, int), value)):
+            raise ValueError("All members should have type int")
         self.value = value
 
 
@@ -193,7 +198,7 @@ class BaseOnlineScoreRequest(BaseRequest):
         is_phone_and_email_exists = kwargs.get("phone") and kwargs.get("email")
         is_first_and_last_name_exists = (kwargs.get("first_name")
                                          and kwargs.get("last_name"))
-        is_gender_and_birthday_exists = (kwargs.get("gender")
+        is_gender_and_birthday_exists = ((kwargs.get("gender") in GENDERS.keys())
                                          and kwargs.get("birthday"))
 
         if not any([is_phone_and_email_exists, is_first_and_last_name_exists,
@@ -217,16 +222,17 @@ class BaseOnlineScoreRequest(BaseRequest):
     def get_context(self):
         return {
             "has": [field_name for field_name, field_value in self._fields
-                    if field_value.value]
+                    if field_value.value is not None]
         }
 
 
 class ClientsInterestsMixin(BaseRequest):
     def get_result(self, store):
-        pass
+        return {client_id: get_interests(store, client_id)
+                for client_id in self.client_ids}
 
     def get_context(self):
-        pass
+        return {"nclients": len(self.client_ids)}
 
 
 class ClientsInterestsRequest(ClientsInterestsMixin, BaseRequest):
@@ -238,13 +244,13 @@ class OnlineScoreRequest(BaseOnlineScoreRequest):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=False)
+    phone = PhoneField(required=False, nullable=True)
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
 
 class MethodRequest(BaseRequest):
-    account = CharField(required=False, nullable=False)
+    account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
     arguments = ArgumentsField(required=True, nullable=True)
@@ -270,11 +276,11 @@ def method_handler(request, ctx, store):
 
     if not request_obj.is_valid():
         logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
-        return request_obj.errors, BAD_REQUEST
+        return request_obj.errors, INVALID_REQUEST
 
     if not check_auth(request_obj):
         logging.error("%s user %s: %d" % (ERRORS[FORBIDDEN],
-                                         request_obj.login, FORBIDDEN))
+                                          request_obj.login, FORBIDDEN))
         return request_obj.errors, FORBIDDEN
 
     if request_obj.is_admin:
@@ -296,7 +302,7 @@ def method_handler(request, ctx, store):
         code = OK
     else:
         logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
-        return method_obj.errors, BAD_REQUEST
+        return method_obj.errors, INVALID_REQUEST
     ctx.update(context)
     logging.info("Returned context: %s, "
                  "response: %s, code: %s" % (context, response, code))
