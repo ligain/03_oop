@@ -16,6 +16,7 @@ from scoring import get_score, get_interests
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
 ADMIN_SALT = "42"
+ADMIN_SCORE = 42
 OK = 200
 BAD_REQUEST = 400
 FORBIDDEN = 403
@@ -42,6 +43,12 @@ PHONE_LENGTH = 11
 
 
 class BaseField(object):
+    """
+    Base class for all fields
+    The attr `required` assumes the should be in request.
+    If `nullable` attr is set to `True` the field
+    can have `None` value.
+    """
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
@@ -57,11 +64,16 @@ class BaseField(object):
 
 
 class TypeFieldMixin(BaseField):
-    allowed_types = (type(None))
+    """
+    A mixin to check whether `Field` type suits
+    types in `allowed_types` variable
+    `allowed_types` should be a tuple
+    """
+    allowed_types = (type(None), )
 
     def __set__(self, instance, value):
         super(TypeFieldMixin, self).__set__(instance, value)
-        if not any(isinstance(value, type_) for type_ in self.allowed_types):
+        if not isinstance(value, self.allowed_types):
             error_str = ' or '.join(
                 str(type_) for type_ in self.allowed_types
             )
@@ -69,7 +81,7 @@ class TypeFieldMixin(BaseField):
 
 
 class CharField(TypeFieldMixin, BaseField):
-    allowed_types = [type(None), str, unicode]
+    allowed_types = (type(None), basestring)
 
     def __set__(self, instance, value):
         super(CharField, self).__set__(instance, value)
@@ -77,7 +89,7 @@ class CharField(TypeFieldMixin, BaseField):
 
 
 class ArgumentsField(TypeFieldMixin, BaseField):
-    allowed_types = [type(None), dict]
+    allowed_types = (type(None), dict)
 
     def __set__(self, instance, value):
         super(ArgumentsField, self).__set__(instance, value)
@@ -87,18 +99,16 @@ class ArgumentsField(TypeFieldMixin, BaseField):
 class EmailField(CharField):
     def __set__(self, instance, value):
         super(EmailField, self).__set__(instance, value)
-        if (isinstance(self.value, str) or isinstance(self.value, unicode)) \
-                and "@" not in value:
+        if isinstance(self.value, basestring) and "@" not in value:
             raise ValueError("@ character should be in EmailField")
 
 
 class PhoneField(TypeFieldMixin, BaseField):
-    allowed_types = [type(None), str, unicode, int]
+    allowed_types = (type(None), basestring, int)
 
     def __set__(self, instance, value):
         super(PhoneField, self).__set__(instance, value)
-        if (isinstance(value, str) or isinstance(value, unicode) or
-                isinstance(value, int)):
+        if value is not None:
             converted_value = str(value)
             if not (len(converted_value) == PHONE_LENGTH
                     and converted_value.startswith("7")):
@@ -108,12 +118,11 @@ class PhoneField(TypeFieldMixin, BaseField):
 
 
 class DateField(TypeFieldMixin, BaseField):
-    allowed_types = [type(None), str, unicode, datetime.datetime]
+    allowed_types = (type(None), basestring, datetime.datetime)
 
     def __set__(self, instance, value):
         super(DateField, self).__set__(instance, value)
-        # TODO: change to basestring
-        if isinstance(value, str) or isinstance(value, unicode):
+        if isinstance(value, basestring):
             try:
                 value = datetime.datetime.strptime(value, "%d.%m.%Y")
             except ValueError:
@@ -132,7 +141,7 @@ class BirthDayField(DateField):
 
 
 class GenderField(TypeFieldMixin, BaseField):
-    allowed_types = [type(None), int]
+    allowed_types = (type(None), int)
 
     def __set__(self, instance, value):
         super(GenderField, self).__set__(instance, value)
@@ -144,7 +153,7 @@ class GenderField(TypeFieldMixin, BaseField):
 
 
 class ClientIDsField(TypeFieldMixin, BaseField):
-    allowed_types = [type(None), Sequence]
+    allowed_types = (type(None), Sequence)
 
     def __set__(self, instance, value):
         super(ClientIDsField, self).__set__(instance, value)
@@ -283,9 +292,10 @@ def method_handler(request, ctx, store):
                                           request_obj.login, FORBIDDEN))
         return request_obj.errors, FORBIDDEN
 
+    # If user is the admin then return score=42
     if request_obj.is_admin:
         logging.info("Returned response for admin with score=42")
-        return {"score": 42}, OK
+        return {"score": ADMIN_SCORE}, OK
 
     method = request["body"].get("method")
     if method == "online_score":
