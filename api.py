@@ -49,12 +49,19 @@ class BaseField(object):
     If `nullable` attr is set to `True` the field
     can have `None` value.
     """
+    allowed_types = (type(None),)
+
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
         self.value = None
 
     def __set__(self, instance, value):
+        if not isinstance(value, self.allowed_types):
+            error_str = ' or '.join(
+                str(type_) for type_ in self.allowed_types
+            )
+            raise TypeError("The field must be %s" % error_str)
         if not self.nullable and value is None:
             raise ValueError("The field cannot be "
                              "None with nullable=False option")
@@ -63,24 +70,7 @@ class BaseField(object):
         return self.value
 
 
-class TypeFieldMixin(BaseField):
-    """
-    A mixin to check whether `Field` type suits
-    types in `allowed_types` variable
-    `allowed_types` should be a tuple
-    """
-    allowed_types = (type(None), )
-
-    def __set__(self, instance, value):
-        super(TypeFieldMixin, self).__set__(instance, value)
-        if not isinstance(value, self.allowed_types):
-            error_str = ' or '.join(
-                str(type_) for type_ in self.allowed_types
-            )
-            raise TypeError("The field must be %s" % error_str)
-
-
-class CharField(TypeFieldMixin, BaseField):
+class CharField(BaseField):
     allowed_types = (type(None), basestring)
 
     def __set__(self, instance, value):
@@ -88,7 +78,7 @@ class CharField(TypeFieldMixin, BaseField):
         self.value = value
 
 
-class ArgumentsField(TypeFieldMixin, BaseField):
+class ArgumentsField(BaseField):
     allowed_types = (type(None), dict)
 
     def __set__(self, instance, value):
@@ -103,7 +93,7 @@ class EmailField(CharField):
             raise ValueError("@ character should be in EmailField")
 
 
-class PhoneField(TypeFieldMixin, BaseField):
+class PhoneField(BaseField):
     allowed_types = (type(None), basestring, int)
 
     def __set__(self, instance, value):
@@ -117,7 +107,7 @@ class PhoneField(TypeFieldMixin, BaseField):
         self.value = value
 
 
-class DateField(TypeFieldMixin, BaseField):
+class DateField(BaseField):
     allowed_types = (type(None), basestring, datetime.datetime)
 
     def __set__(self, instance, value):
@@ -140,7 +130,7 @@ class BirthDayField(DateField):
                                  "older than %d years" % LIMIT_YEARS)
 
 
-class GenderField(TypeFieldMixin, BaseField):
+class GenderField(BaseField):
     allowed_types = (type(None), int)
 
     def __set__(self, instance, value):
@@ -152,7 +142,7 @@ class GenderField(TypeFieldMixin, BaseField):
         self.value = value
 
 
-class ClientIDsField(TypeFieldMixin, BaseField):
+class ClientIDsField(BaseField):
     allowed_types = (type(None), Sequence)
 
     def __set__(self, instance, value):
@@ -165,31 +155,29 @@ class ClientIDsField(TypeFieldMixin, BaseField):
 
 
 class BaseRequest(object):
-
     def __init__(self, **kwargs):
         self._errors = defaultdict(list)
-        self._fields = self._get_fields()
+        self._fields = []
+        self.kwargs = kwargs
+
+    def _get_fields(self):
+        for name, value in vars(self.__class__).items():
+            if hasattr(value, 'required'):
+                self._fields.append((name, value))
+
+    def validate_fields(self):
 
         for field_name, field_value in self._fields:
-            if field_value.required and kwargs.get(field_name, False) is False:
+            if field_value.required and self.kwargs.get(field_name, False) is False:
                 self._errors[field_name].append("The field is required")
             try:
-                setattr(self, field_name, kwargs.get(field_name))
+                setattr(self, field_name, self.kwargs.get(field_name))
             except (ValueError, TypeError) as e:
                 self._errors[field_name].append(str(e))
 
-    def _get_fields(self):
-        fields = []
-        for name, value in vars(self.__class__).items():
-            if hasattr(value, 'required'):
-                fields.append((name, value))
-        return fields
-
-    def get_result(self, store):
-        raise NotImplemented
-
-    def get_context(self):
-        raise NotImplemented
+    def do_validations(self):
+        self._get_fields()
+        self.validate_fields()
 
     def is_valid(self):
         return not bool(self._errors)
@@ -199,16 +187,34 @@ class BaseRequest(object):
         return self._errors
 
 
-class BaseOnlineScoreRequest(BaseRequest):
-    def __init__(self, **kwargs):
-        super(BaseOnlineScoreRequest, self).__init__(**kwargs)
-        # check if any of this pairs: phone & email or
-        # first & last name or gender & birthday exist in passed arguments
-        is_phone_and_email_exists = kwargs.get("phone") and kwargs.get("email")
-        is_first_and_last_name_exists = (kwargs.get("first_name")
-                                         and kwargs.get("last_name"))
-        is_gender_and_birthday_exists = ((kwargs.get("gender") in GENDERS.keys())
-                                         and kwargs.get("birthday"))
+class ClientsInterestsRequest(BaseRequest):
+    client_ids = ClientIDsField(required=True)
+    date = DateField(required=False, nullable=True)
+
+    def get_result(self, store):
+        return {client_id: get_interests(store, client_id)
+                for client_id in self.client_ids}
+
+    def get_context(self):
+        return {"nclients": len(self.client_ids)}
+
+
+class OnlineScoreRequest(BaseRequest):
+    first_name = CharField(required=False, nullable=True)
+    last_name = CharField(required=False, nullable=True)
+    email = EmailField(required=False, nullable=True)
+    phone = PhoneField(required=False, nullable=True)
+    birthday = BirthDayField(required=False, nullable=True)
+    gender = GenderField(required=False, nullable=True)
+
+    def do_validations(self):
+        super(OnlineScoreRequest, self).do_validations()
+
+        is_phone_and_email_exists = self.kwargs.get("phone") and self.kwargs.get("email")
+        is_first_and_last_name_exists = (self.kwargs.get("first_name")
+                                         and self.kwargs.get("last_name"))
+        is_gender_and_birthday_exists = ((self.kwargs.get("gender") in GENDERS.keys())
+                                         and self.kwargs.get("birthday"))
 
         if not any([is_phone_and_email_exists, is_first_and_last_name_exists,
                     is_gender_and_birthday_exists]):
@@ -235,29 +241,6 @@ class BaseOnlineScoreRequest(BaseRequest):
         }
 
 
-class ClientsInterestsMixin(BaseRequest):
-    def get_result(self, store):
-        return {client_id: get_interests(store, client_id)
-                for client_id in self.client_ids}
-
-    def get_context(self):
-        return {"nclients": len(self.client_ids)}
-
-
-class ClientsInterestsRequest(ClientsInterestsMixin, BaseRequest):
-    client_ids = ClientIDsField(required=True)
-    date = DateField(required=False, nullable=True)
-
-
-class OnlineScoreRequest(BaseOnlineScoreRequest):
-    first_name = CharField(required=False, nullable=True)
-    last_name = CharField(required=False, nullable=True)
-    email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=True)
-    birthday = BirthDayField(required=False, nullable=True)
-    gender = GenderField(required=False, nullable=True)
-
-
 class MethodRequest(BaseRequest):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
@@ -281,7 +264,13 @@ def check_auth(request):
 
 
 def method_handler(request, ctx, store):
+    methods = {
+        "online_score": OnlineScoreRequest,
+        "clients_interests": ClientsInterestsRequest
+    }
+
     request_obj = MethodRequest(**request["body"])
+    request_obj.do_validations()
 
     if not request_obj.is_valid():
         logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
@@ -298,10 +287,10 @@ def method_handler(request, ctx, store):
         return {"score": ADMIN_SCORE}, OK
 
     method = request["body"].get("method")
-    if method == "online_score":
-        method_obj = OnlineScoreRequest(**request["body"].get("arguments"))
-    elif method == "clients_interests":
-        method_obj = ClientsInterestsRequest(**request["body"].get("arguments"))
+
+    if method in methods:
+        method_obj = methods[method](**request["body"].get("arguments"))
+        method_obj.do_validations()
     else:
         logging.info("Unknown method: %s" % method)
         return {"method": "Unknown method"}, INVALID_REQUEST
