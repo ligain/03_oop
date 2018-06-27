@@ -155,31 +155,29 @@ class ClientIDsField(BaseField):
 
 
 class BaseRequest(object):
-
     def __init__(self, **kwargs):
         self._errors = defaultdict(list)
-        self._fields = self._get_fields()
+        self._fields = []
+        self.kwargs = kwargs
+
+    def _get_fields(self):
+        for name, value in vars(self.__class__).items():
+            if hasattr(value, 'required'):
+                self._fields.append((name, value))
+
+    def validate_fields(self):
 
         for field_name, field_value in self._fields:
-            if field_value.required and kwargs.get(field_name, False) is False:
+            if field_value.required and self.kwargs.get(field_name, False) is False:
                 self._errors[field_name].append("The field is required")
             try:
-                setattr(self, field_name, kwargs.get(field_name))
+                setattr(self, field_name, self.kwargs.get(field_name))
             except (ValueError, TypeError) as e:
                 self._errors[field_name].append(str(e))
 
-    def _get_fields(self):
-        fields = []
-        for name, value in vars(self.__class__).items():
-            if hasattr(value, 'required'):
-                fields.append((name, value))
-        return fields
-
-    def get_result(self, store):
-        raise NotImplemented
-
-    def get_context(self):
-        raise NotImplemented
+    def do_validations(self):
+        self._get_fields()
+        self.validate_fields()
 
     def is_valid(self):
         return not bool(self._errors)
@@ -189,16 +187,34 @@ class BaseRequest(object):
         return self._errors
 
 
-class BaseOnlineScoreRequest(BaseRequest):
-    def __init__(self, **kwargs):
-        super(BaseOnlineScoreRequest, self).__init__(**kwargs)
-        # check if any of this pairs: phone & email or
-        # first & last name or gender & birthday exist in passed arguments
-        is_phone_and_email_exists = kwargs.get("phone") and kwargs.get("email")
-        is_first_and_last_name_exists = (kwargs.get("first_name")
-                                         and kwargs.get("last_name"))
-        is_gender_and_birthday_exists = ((kwargs.get("gender") in GENDERS.keys())
-                                         and kwargs.get("birthday"))
+class ClientsInterestsRequest(BaseRequest):
+    client_ids = ClientIDsField(required=True)
+    date = DateField(required=False, nullable=True)
+
+    def get_result(self, store):
+        return {client_id: get_interests(store, client_id)
+                for client_id in self.client_ids}
+
+    def get_context(self):
+        return {"nclients": len(self.client_ids)}
+
+
+class OnlineScoreRequest(BaseRequest):
+    first_name = CharField(required=False, nullable=True)
+    last_name = CharField(required=False, nullable=True)
+    email = EmailField(required=False, nullable=True)
+    phone = PhoneField(required=False, nullable=True)
+    birthday = BirthDayField(required=False, nullable=True)
+    gender = GenderField(required=False, nullable=True)
+
+    def do_validations(self):
+        super(OnlineScoreRequest, self).do_validations()
+
+        is_phone_and_email_exists = self.kwargs.get("phone") and self.kwargs.get("email")
+        is_first_and_last_name_exists = (self.kwargs.get("first_name")
+                                         and self.kwargs.get("last_name"))
+        is_gender_and_birthday_exists = ((self.kwargs.get("gender") in GENDERS.keys())
+                                         and self.kwargs.get("birthday"))
 
         if not any([is_phone_and_email_exists, is_first_and_last_name_exists,
                     is_gender_and_birthday_exists]):
@@ -225,29 +241,6 @@ class BaseOnlineScoreRequest(BaseRequest):
         }
 
 
-class ClientsInterestsMixin(BaseRequest):
-    def get_result(self, store):
-        return {client_id: get_interests(store, client_id)
-                for client_id in self.client_ids}
-
-    def get_context(self):
-        return {"nclients": len(self.client_ids)}
-
-
-class ClientsInterestsRequest(ClientsInterestsMixin, BaseRequest):
-    client_ids = ClientIDsField(required=True)
-    date = DateField(required=False, nullable=True)
-
-
-class OnlineScoreRequest(BaseOnlineScoreRequest):
-    first_name = CharField(required=False, nullable=True)
-    last_name = CharField(required=False, nullable=True)
-    email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=True)
-    birthday = BirthDayField(required=False, nullable=True)
-    gender = GenderField(required=False, nullable=True)
-
-
 class MethodRequest(BaseRequest):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
@@ -271,7 +264,13 @@ def check_auth(request):
 
 
 def method_handler(request, ctx, store):
+    methods = {
+        "online_score": OnlineScoreRequest,
+        "clients_interests": ClientsInterestsRequest
+    }
+
     request_obj = MethodRequest(**request["body"])
+    request_obj.do_validations()
 
     if not request_obj.is_valid():
         logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
@@ -288,10 +287,10 @@ def method_handler(request, ctx, store):
         return {"score": ADMIN_SCORE}, OK
 
     method = request["body"].get("method")
-    if method == "online_score":
-        method_obj = OnlineScoreRequest(**request["body"].get("arguments"))
-    elif method == "clients_interests":
-        method_obj = ClientsInterestsRequest(**request["body"].get("arguments"))
+
+    if method in methods:
+        method_obj = methods[method](**request["body"].get("arguments"))
+        method_obj.do_validations()
     else:
         logging.info("Unknown method: %s" % method)
         return {"method": "Unknown method"}, INVALID_REQUEST
