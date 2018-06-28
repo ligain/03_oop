@@ -154,19 +154,26 @@ class ClientIDsField(BaseField):
         self.value = value
 
 
+class RequestMeta(type):
+    def __new__(cls, clsname, bases, attrs):
+        fields = []
+        for key, value in attrs.items():
+            if isinstance(value, BaseField):
+                fields.append((key, value))
+        cls = type.__new__(cls, clsname, bases, attrs)
+        cls._fields = fields
+        return cls
+
+
 class BaseRequest(object):
+    __metaclass__ = RequestMeta
+
     def __init__(self, **kwargs):
         self._errors = defaultdict(list)
-        self._fields = []
         self.kwargs = kwargs
-
-    def _get_fields(self):
-        for name, value in vars(self.__class__).items():
-            if hasattr(value, 'required'):
-                self._fields.append((name, value))
+        self.is_validated = False
 
     def validate_fields(self):
-
         for field_name, field_value in self._fields:
             if field_value.required and self.kwargs.get(field_name, False) is False:
                 self._errors[field_name].append("The field is required")
@@ -174,13 +181,12 @@ class BaseRequest(object):
                 setattr(self, field_name, self.kwargs.get(field_name))
             except (ValueError, TypeError) as e:
                 self._errors[field_name].append(str(e))
-
-    def do_validations(self):
-        self._get_fields()
-        self.validate_fields()
+        self.is_validated = False
 
     def is_valid(self):
-        return not bool(self._errors)
+        if not self.is_validated:
+            self.validate_fields()
+        return not self._errors
 
     @property
     def errors(self):
@@ -207,9 +213,10 @@ class OnlineScoreRequest(BaseRequest):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def do_validations(self):
-        super(OnlineScoreRequest, self).do_validations()
-
+    def is_valid(self):
+        is_fields_valid = super(OnlineScoreRequest, self).is_valid()
+        if not is_fields_valid:
+            return is_fields_valid
         is_phone_and_email_exists = self.kwargs.get("phone") and self.kwargs.get("email")
         is_first_and_last_name_exists = (self.kwargs.get("first_name")
                                          and self.kwargs.get("last_name"))
@@ -221,6 +228,8 @@ class OnlineScoreRequest(BaseRequest):
             self._errors["params"] = "missing one of non-empty pairs: " \
                                      "phone & email or first & last name or " \
                                      "gender & birthday"
+            return False
+        return True
 
     def get_result(self, store):
         score = get_score(
@@ -270,7 +279,6 @@ def method_handler(request, ctx, store):
     }
 
     request_obj = MethodRequest(**request["body"])
-    request_obj.do_validations()
 
     if not request_obj.is_valid():
         logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
@@ -290,7 +298,6 @@ def method_handler(request, ctx, store):
 
     if method in methods:
         method_obj = methods[method](**request["body"].get("arguments"))
-        method_obj.do_validations()
     else:
         logging.info("Unknown method: %s" % method)
         return {"method": "Unknown method"}, INVALID_REQUEST
