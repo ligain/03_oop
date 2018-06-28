@@ -197,13 +197,6 @@ class ClientsInterestsRequest(BaseRequest):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
-    def get_result(self, store):
-        return {client_id: get_interests(store, client_id)
-                for client_id in self.client_ids}
-
-    def get_context(self):
-        return {"nclients": len(self.client_ids)}
-
 
 class OnlineScoreRequest(BaseRequest):
     first_name = CharField(required=False, nullable=True)
@@ -231,23 +224,53 @@ class OnlineScoreRequest(BaseRequest):
             return False
         return True
 
-    def get_result(self, store):
-        score = get_score(
-            store,
-            phone=self.phone,
-            email=self.email,
-            birthday=self.birthday,
-            gender=self.gender,
-            first_name=self.first_name,
-            last_name=self.last_name
-        )
-        return {"score": score}
 
-    def get_context(self):
-        return {
-            "has": [field_name for field_name, field_value in self._fields
-                    if field_value.value is not None]
-        }
+class RequestHandler(object):
+    request_cls = None
+
+    def do_validations(self, request, ctx, store):
+        if not self.request_cls:
+            logging.error("You must specify request_cls in the handler")
+            return "Invalid handler", INVALID_REQUEST
+        arguments = self.request_cls(**request.arguments)
+        if not arguments.is_valid():
+            logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], arguments.errors))
+            return arguments.errors, INVALID_REQUEST
+        return self.get_result(request, arguments, ctx, store)
+
+    def get_result(self, request, arguments, ctx, store):
+        return {}, OK
+
+
+class OnlineScoreHandler(RequestHandler):
+    request_cls = OnlineScoreRequest
+
+    def get_result(self, request, arguments, ctx, store):
+        if request.is_admin:
+            logging.info("Returned response for admin with score=42")
+            return {"score": ADMIN_SCORE}, OK
+        else:
+            score = get_score(
+                store,
+                phone=arguments.phone,
+                email=arguments.email,
+                birthday=arguments.birthday,
+                gender=arguments.gender,
+                first_name=arguments.first_name,
+                last_name=arguments.last_name
+            )
+        ctx["has"] = [field_name for field_name, field_value in arguments._fields
+                      if field_value.value is not None]
+        return {"score": score}, OK
+
+
+class ClientsInterestsHandler(RequestHandler):
+    request_cls = ClientsInterestsRequest
+
+    def get_result(self, request, arguments, ctx, store):
+        ctx["nclients"] = len(arguments.client_ids)
+        return {client_id: get_interests(store, client_id)
+                for client_id in arguments.client_ids}, OK
 
 
 class MethodRequest(BaseRequest):
@@ -274,12 +297,11 @@ def check_auth(request):
 
 def method_handler(request, ctx, store):
     methods = {
-        "online_score": OnlineScoreRequest,
-        "clients_interests": ClientsInterestsRequest
+        "online_score": OnlineScoreHandler,
+        "clients_interests": ClientsInterestsHandler
     }
 
     request_obj = MethodRequest(**request["body"])
-
     if not request_obj.is_valid():
         logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
         return request_obj.errors, INVALID_REQUEST
@@ -289,29 +311,17 @@ def method_handler(request, ctx, store):
                                           request_obj.login, FORBIDDEN))
         return request_obj.errors, FORBIDDEN
 
-    # If user is the admin then return score=42
-    if request_obj.is_admin:
-        logging.info("Returned response for admin with score=42")
-        return {"score": ADMIN_SCORE}, OK
-
     method = request["body"].get("method")
 
     if method in methods:
-        method_obj = methods[method](**request["body"].get("arguments"))
+        method_obj = methods[method]
     else:
         logging.info("Unknown method: %s" % method)
         return {"method": "Unknown method"}, INVALID_REQUEST
+    response, code = method_obj().do_validations(request_obj, ctx, store)
 
-    if method_obj.is_valid():
-        response = method_obj.get_result(store)
-        context = method_obj.get_context()
-        code = OK
-    else:
-        logging.error("%s: %s" % (ERRORS[INVALID_REQUEST], request_obj.errors))
-        return method_obj.errors, INVALID_REQUEST
-    ctx.update(context)
     logging.info("Returned context: %s, "
-                 "response: %s, code: %s" % (context, response, code))
+                 "response: %s, code: %s" % (ctx, response, code))
     return response, code
 
 
