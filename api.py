@@ -42,6 +42,10 @@ LIMIT_YEARS = 70
 PHONE_LENGTH = 11
 
 
+class ValidationError(Exception):
+    pass
+
+
 class BaseField(object):
     """
     Base class for all fields
@@ -61,10 +65,10 @@ class BaseField(object):
             error_str = ' or '.join(
                 str(type_) for type_ in self.allowed_types
             )
-            raise TypeError("The field must be %s" % error_str)
+            raise ValidationError("The field must be %s" % error_str)
         if not self.nullable and value is None:
-            raise ValueError("The field cannot be "
-                             "None with nullable=False option")
+            raise ValidationError("The field cannot be "
+                                  "None with nullable=False option")
 
     def __get__(self, instance, owner):
         return self.value
@@ -90,7 +94,7 @@ class EmailField(CharField):
     def __set__(self, instance, value):
         super(EmailField, self).__set__(instance, value)
         if isinstance(self.value, basestring) and "@" not in value:
-            raise ValueError("@ character should be in EmailField")
+            raise ValidationError("@ character should be in EmailField")
 
 
 class PhoneField(BaseField):
@@ -102,8 +106,8 @@ class PhoneField(BaseField):
             converted_value = str(value)
             if not (len(converted_value) == PHONE_LENGTH
                     and converted_value.startswith("7")):
-                raise ValueError("The field should has length=11 "
-                                 "and starts from 7")
+                raise ValidationError("The field should has length=11 "
+                                      "and starts from 7")
         self.value = value
 
 
@@ -116,7 +120,7 @@ class DateField(BaseField):
             try:
                 value = datetime.datetime.strptime(value, "%d.%m.%Y")
             except ValueError:
-                raise ValueError("Invalid field datetime format")
+                raise ValidationError("Invalid field datetime format")
         self.value = value
 
 
@@ -125,9 +129,9 @@ class BirthDayField(DateField):
         super(BirthDayField, self).__set__(instance, value)
         if isinstance(self.value, datetime.datetime):
             if self.value < (datetime.datetime.today() -
-                            datetime.timedelta(days=365 * LIMIT_YEARS)):
-                raise ValueError("The field cannot be "
-                                 "older than %d years" % LIMIT_YEARS)
+                             datetime.timedelta(days=365 * LIMIT_YEARS)):
+                raise ValidationError("The field cannot be "
+                                      "older than %d years" % LIMIT_YEARS)
 
 
 class GenderField(BaseField):
@@ -137,8 +141,8 @@ class GenderField(BaseField):
         super(GenderField, self).__set__(instance, value)
         variants = GENDERS.keys() + [None]
         if value not in variants:
-            raise ValueError("The field should have "
-                             "values: %s" % " ,".join(variants))
+            raise ValidationError("The field should have "
+                                  "values: %s" % " ,".join(list(map(str, variants))))
         self.value = value
 
 
@@ -148,9 +152,9 @@ class ClientIDsField(BaseField):
     def __set__(self, instance, value):
         super(ClientIDsField, self).__set__(instance, value)
         if isinstance(value, Sized) and len(value) <= 0:
-            raise ValueError("The field must contain more than one id")
+            raise ValidationError("The field must contain more than one id")
         if not all(map(lambda i: isinstance(i, int), value)):
-            raise ValueError("All members should have type int")
+            raise ValidationError("All members should have type int")
         self.value = value
 
 
@@ -179,9 +183,9 @@ class BaseRequest(object):
                 self._errors[field_name].append("The field is required")
             try:
                 setattr(self, field_name, self.kwargs.get(field_name))
-            except (ValueError, TypeError) as e:
+            except ValidationError as e:
                 self._errors[field_name].append(str(e))
-        self.is_validated = False
+        self.is_validated = True
 
     def is_valid(self):
         if not self.is_validated:
