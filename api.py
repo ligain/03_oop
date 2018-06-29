@@ -59,6 +59,7 @@ class BaseField(object):
         self.required = required
         self.nullable = nullable
         self.value = None
+        self.field_name = None
 
     def __set__(self, instance, value):
         if not isinstance(value, self.allowed_types):
@@ -79,7 +80,7 @@ class CharField(BaseField):
 
     def __set__(self, instance, value):
         super(CharField, self).__set__(instance, value)
-        self.value = value
+        instance.fields[self.field_name].value = value
 
 
 class ArgumentsField(BaseField):
@@ -87,7 +88,7 @@ class ArgumentsField(BaseField):
 
     def __set__(self, instance, value):
         super(ArgumentsField, self).__set__(instance, value)
-        self.value = value
+        instance.fields[self.field_name].value = value
 
 
 class EmailField(CharField):
@@ -108,7 +109,7 @@ class PhoneField(BaseField):
                     and converted_value.startswith("7")):
                 raise ValidationError("The field should has length=11 "
                                       "and starts from 7")
-        self.value = value
+        instance.fields[self.field_name].value = value
 
 
 class DateField(BaseField):
@@ -121,7 +122,7 @@ class DateField(BaseField):
                 value = datetime.datetime.strptime(value, "%d.%m.%Y")
             except ValueError:
                 raise ValidationError("Invalid field datetime format")
-        self.value = value
+        instance.fields[self.field_name].value = value
 
 
 class BirthDayField(DateField):
@@ -143,7 +144,7 @@ class GenderField(BaseField):
         if value not in variants:
             raise ValidationError("The field should have "
                                   "values: %s" % " ,".join(list(map(str, variants))))
-        self.value = value
+        instance.fields[self.field_name].value = value
 
 
 class ClientIDsField(BaseField):
@@ -155,17 +156,18 @@ class ClientIDsField(BaseField):
             raise ValidationError("The field must contain more than one id")
         if not all(map(lambda i: isinstance(i, int), value)):
             raise ValidationError("All members should have type int")
-        self.value = value
+        instance.fields[self.field_name].value = value
 
 
 class RequestMeta(type):
     def __new__(cls, clsname, bases, attrs):
-        fields = []
+        fields = {}
         for key, value in attrs.items():
             if isinstance(value, BaseField):
-                fields.append((key, value))
+                value.field_name = key
+                fields[key] = value
         cls = type.__new__(cls, clsname, bases, attrs)
-        cls._fields = fields
+        cls.fields = fields
         return cls
 
 
@@ -178,7 +180,7 @@ class BaseRequest(object):
         self.is_validated = False
 
     def validate_fields(self):
-        for field_name, field_value in self._fields:
+        for field_name, field_value in self.fields.items():
             if field_value.required and self.kwargs.get(field_name, False) is False:
                 self._errors[field_name].append("The field is required")
             try:
@@ -263,7 +265,7 @@ class OnlineScoreHandler(RequestHandler):
                 first_name=arguments.first_name,
                 last_name=arguments.last_name
             )
-        ctx["has"] = [field_name for field_name, field_value in arguments._fields
+        ctx["has"] = [field_name for field_name, field_value in arguments.fields.items()
                       if field_value.value is not None]
         return {"score": score}, OK
 
