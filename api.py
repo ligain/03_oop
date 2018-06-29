@@ -175,28 +175,24 @@ class BaseRequest(object):
     __metaclass__ = RequestMeta
 
     def __init__(self, **kwargs):
-        self._errors = defaultdict(list)
+        self.errors = []
         self.kwargs = kwargs
         self.is_validated = False
 
     def validate_fields(self):
         for field_name, field_value in self.fields.items():
             if field_value.required and self.kwargs.get(field_name, False) is False:
-                self._errors[field_name].append("The field is required")
+                self.errors.append("The %s is required" % field_name)
             try:
                 setattr(self, field_name, self.kwargs.get(field_name))
             except ValidationError as e:
-                self._errors[field_name].append(str(e))
+                self.errors.append("The %s error: %s" % (field_name, str(e)))
         self.is_validated = True
 
     def is_valid(self):
         if not self.is_validated:
             self.validate_fields()
-        return not self._errors
-
-    @property
-    def errors(self):
-        return self._errors
+        return not self.errors
 
 
 class ClientsInterestsRequest(BaseRequest):
@@ -224,9 +220,9 @@ class OnlineScoreRequest(BaseRequest):
 
         if not any([is_phone_and_email_exists, is_first_and_last_name_exists,
                     is_gender_and_birthday_exists]):
-            self._errors["params"] = "missing one of non-empty pairs: " \
-                                     "phone & email or first & last name or " \
-                                     "gender & birthday"
+            self.errors.append("missing one of non-empty pairs: "
+                               "phone & email or first & "
+                               "last name or gender & birthday")
             return False
         return True
 
