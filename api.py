@@ -70,6 +70,7 @@ class BaseField(object):
         if not self.nullable and value is None:
             raise ValidationError("The field cannot be "
                                   "None with nullable=False option")
+        instance.fields[self.field_name].value = value
 
     def __get__(self, instance, owner):
         return self.value
@@ -208,10 +209,8 @@ class OnlineScoreRequest(BaseRequest):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def is_valid(self):
-        is_fields_valid = super(OnlineScoreRequest, self).is_valid()
-        if not is_fields_valid:
-            return is_fields_valid
+    def validate_fields(self):
+        super(OnlineScoreRequest, self).validate_fields()
         is_phone_and_email_exists = self.kwargs.get("phone") and self.kwargs.get("email")
         is_first_and_last_name_exists = (self.kwargs.get("first_name")
                                          and self.kwargs.get("last_name"))
@@ -223,14 +222,12 @@ class OnlineScoreRequest(BaseRequest):
             self.errors.append("missing one of non-empty pairs: "
                                "phone & email or first & "
                                "last name or gender & birthday")
-            return False
-        return True
 
 
 class RequestHandler(object):
     request_cls = None
 
-    def do_validations(self, request, ctx, store):
+    def handle(self, request, ctx, store):
         if not self.request_cls:
             logging.error("You must specify request_cls in the handler")
             return "Invalid handler", INVALID_REQUEST
@@ -320,7 +317,7 @@ def method_handler(request, ctx, store):
     else:
         logging.info("Unknown method: %s" % method)
         return {"method": "Unknown method"}, INVALID_REQUEST
-    response, code = method_obj().do_validations(request_obj, ctx, store)
+    response, code = method_obj().handle(request_obj, ctx, store)
 
     logging.info("Returned context: %s, "
                  "response: %s, code: %s" % (ctx, response, code))
