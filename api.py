@@ -58,7 +58,6 @@ class BaseField(object):
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
-        self.value = None
         self.field_name = None
 
     def __set__(self, instance, value):
@@ -70,10 +69,10 @@ class BaseField(object):
         if not self.nullable and value is None:
             raise ValidationError("The field cannot be "
                                   "None with nullable=False option")
-        instance.fields[self.field_name].value = value
+        instance.__dict__[self.field_name] = value
 
     def __get__(self, instance, owner):
-        return self.value
+        return instance.__dict__[self.field_name]
 
 
 class CharField(BaseField):
@@ -81,7 +80,6 @@ class CharField(BaseField):
 
     def __set__(self, instance, value):
         super(CharField, self).__set__(instance, value)
-        instance.fields[self.field_name].value = value
 
 
 class ArgumentsField(BaseField):
@@ -89,13 +87,13 @@ class ArgumentsField(BaseField):
 
     def __set__(self, instance, value):
         super(ArgumentsField, self).__set__(instance, value)
-        instance.fields[self.field_name].value = value
 
 
 class EmailField(CharField):
     def __set__(self, instance, value):
         super(EmailField, self).__set__(instance, value)
-        if isinstance(self.value, basestring) and "@" not in value:
+        if isinstance(instance.__dict__[self.field_name], basestring) \
+                and "@" not in value and len(value):
             raise ValidationError("@ character should be in EmailField")
 
 
@@ -110,27 +108,25 @@ class PhoneField(BaseField):
                     and converted_value.startswith("7")):
                 raise ValidationError("The field should has length=11 "
                                       "and starts from 7")
-        instance.fields[self.field_name].value = value
 
 
 class DateField(BaseField):
     allowed_types = (type(None), basestring, datetime.datetime)
 
     def __set__(self, instance, value):
-        super(DateField, self).__set__(instance, value)
         if isinstance(value, basestring):
             try:
                 value = datetime.datetime.strptime(value, "%d.%m.%Y")
             except ValueError:
                 raise ValidationError("Invalid field datetime format")
-        instance.fields[self.field_name].value = value
+        super(DateField, self).__set__(instance, value)
 
 
 class BirthDayField(DateField):
     def __set__(self, instance, value):
         super(BirthDayField, self).__set__(instance, value)
-        if isinstance(self.value, datetime.datetime):
-            if self.value < (datetime.datetime.today() -
+        if isinstance(instance.__dict__[self.field_name], datetime.datetime):
+            if instance.__dict__[self.field_name] < (datetime.datetime.today() -
                              datetime.timedelta(days=365 * LIMIT_YEARS)):
                 raise ValidationError("The field cannot be "
                                       "older than %d years" % LIMIT_YEARS)
@@ -145,7 +141,6 @@ class GenderField(BaseField):
         if value not in variants:
             raise ValidationError("The field should have "
                                   "values: %s" % " ,".join(list(map(str, variants))))
-        instance.fields[self.field_name].value = value
 
 
 class ClientIDsField(BaseField):
@@ -155,32 +150,26 @@ class ClientIDsField(BaseField):
         super(ClientIDsField, self).__set__(instance, value)
         if isinstance(value, Sized) and len(value) <= 0:
             raise ValidationError("The field must contain more than one id")
-        if not all(map(lambda i: isinstance(i, int), value)):
+        if isinstance(value, Sequence) and\
+                not all(map(lambda i: isinstance(i, int), value)):
             raise ValidationError("All members should have type int")
-        instance.fields[self.field_name].value = value
-
-
-class RequestMeta(type):
-    def __new__(cls, clsname, bases, attrs):
-        fields = {}
-        for key, value in attrs.items():
-            if isinstance(value, BaseField):
-                value.field_name = key
-                fields[key] = value
-        cls = type.__new__(cls, clsname, bases, attrs)
-        cls.fields = fields
-        return cls
 
 
 class BaseRequest(object):
-    __metaclass__ = RequestMeta
-
     def __init__(self, **kwargs):
         self.errors = []
         self.kwargs = kwargs
         self.is_validated = False
+        self.fields = {}
+
+    def _get_fields(self):
+        for name, value in vars(self.__class__).items():
+            if isinstance(value, BaseField):
+                self.fields[name] = value
+                value.field_name = name
 
     def validate_fields(self):
+        self._get_fields()
         for field_name, field_value in self.fields.items():
             if field_value.required and self.kwargs.get(field_name, False) is False:
                 self.errors.append("The %s is required" % field_name)
@@ -259,7 +248,7 @@ class OnlineScoreHandler(RequestHandler):
                 last_name=arguments.last_name
             )
         ctx["has"] = [field_name for field_name, field_value in arguments.fields.items()
-                      if field_value.value is not None]
+                      if getattr(arguments, field_name) is not None]
         return {"score": score}, OK
 
 
